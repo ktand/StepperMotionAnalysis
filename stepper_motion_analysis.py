@@ -6,6 +6,7 @@ import numpy as np
 
 from scipy.interpolate import interp1d
 from scipy import signal
+from matplotlib.widgets import MultiCursor
 
 filename = 'analysis.csv'
 
@@ -14,19 +15,19 @@ axes = {
     'index': 0,
     'mm_per_step': 1/160.0,
     'visible': True,
-    'result': None
+    'result': dict()
     },
   'Y' : { 
     'index': 1,
     'mm_per_step': 1/160.0,
     'visible': True,
-    'result': None
+    'result': dict()
     },
   'Z' : { 
     'index': 2,
     'mm_per_step': 1/2133.33,
     'visible': True,
-    'result': None
+    'result': dict()
     }
 }
 
@@ -54,6 +55,9 @@ def acceleration(x, y):
   a = np.append([0], np.diff(v)*fs)
   return a
 
+def maxabs(a):
+  return max(np.max(a), abs(np.min(a)))
+
 def calc_axis(axis_data, time, axis_name):
   t,p,s,n = zip(*axis_data)
   
@@ -63,15 +67,22 @@ def calc_axis(axis_data, time, axis_name):
   vel = velocity(t, pos_filtered)
   acc = acceleration(t, pos_filtered)
 
+  vel_max = maxabs(vel)
+  acc_max = maxabs(acc)
+
+  pulse_min = np.min(s)*1000*1000
+  pulse_avg = np.mean(s)*1000*1000
+  pulse_max = np.max(s)*1000*1000
+  
   if len(s) > 0:
-    print '[Axis {}]: Pulse width (min, avg, max): {:.3f}us, {:.3f}us, {:.3f}us'.format(axis_name, np.min(s)*1000*1000, np.mean(s)*1000*1000, np.max(s)*1000*1000)
+    print '[Axis {}]: Pulse width (min, avg, max): {:.3f}us, {:.3f}us, {:.3f}us. Max velocity = {:f}. Max acceleration = {:f}'.format(axis_name, pulse_min, pulse_avg, pulse_max, vel_max, acc_max)
 
   steps = []
   for step_time, step_width, step_dir in zip(t, s, n):
     steps.append([step_time, step_dir])
     steps.append([step_time+step_width, 0])
 
-  return { 'pos': pos, 'pos_filtered': pos_filtered, 'vel': vel, 'acc': acc, 'steps': np.array(steps) }
+  return { 'pos': pos, 'pos_filtered': pos_filtered, 'vel': vel, 'acc': acc, 'steps': np.array(steps), 'vel_max': vel_max, 'acc_max': acc_max, 'pulse_min': pulse_min, 'pulse_avg': pulse_avg, 'pulse_max' : pulse_max }
 
 def extract_data(data, timeIdx, stepIdx, dirIdx, mm_per_step):
     position = 0
@@ -112,30 +123,26 @@ figure = plt.figure('Stepper Motion analys')
 plot_pos = plt.subplot2grid((rows, cols), (0, 0), colspan = 2)
 plot_pos.set_ylabel('position ($mm$)')
 plot_pos.set_xlabel('time ($s$)')
-plot_pos.legend()
-plot_pos.grid(True)
+
 
 # VELOCITY
 plot_vel = plt.subplot2grid((rows, cols), (1, 0), colspan = 2, sharex=plot_pos)
 plot_vel.set_ylabel('velocity ($mm/s$)')
 plot_vel.set_xlabel('time ($s$)')
-plot_vel.legend()
-plot_vel.grid(True)
+
 
 # ACCELERATION
 plot_acc = plt.subplot2grid((rows, cols), (2, 0), colspan = 2, sharex=plot_pos)
 plot_acc.set_ylabel('acceleration ($mm/s^2$)')
 plot_acc.set_xlabel('time ($s$)')
-plot_acc.legend()
-plot_acc.grid(True)
+
 
 # STEPS
 plot_steps = plt.subplot2grid((rows, cols), (3, 0), colspan = 2, sharex=plot_pos)
 plot_steps.set_ylim(-2, 2)
 plot_steps.set_ylabel('steps')
 plot_steps.set_xlabel('time ($s$)')
-plot_steps.legend()
-plot_steps.grid(True)
+
 
 # Plot motion
 if can_show_motion:
@@ -144,12 +151,30 @@ if can_show_motion:
   plot_graph.set_ylabel('motion ($y$)')
   plot_graph.set_xlabel('motion ($x$)')
 
+props = dict(boxstyle='round', facecolor='wheat', alpha=0.25)
+
 # Plot visible axes
 for axis_name, axis in visible_axes.iteritems():
-    plot_pos.step(reg_t, axis['result']['pos'], label=axis_name)  
-    plot_vel.plot(reg_t, axis['result']['vel'], label=axis_name)
-    plot_acc.plot(reg_t, axis['result']['acc'], label=axis_name)
-    plot_steps.step(axis['result']['steps'][:,0], axis['result']['steps'][:,1], label=axis_name, where='post')
+    result = axis['result']
+    plot_pos.step(reg_t, result['pos'], label=axis_name)  
+    plot_vel.plot(reg_t, result['vel'], label=axis_name)
+    plot_acc.plot(reg_t, result['acc'], label=axis_name)
+    plot_steps.step(result['steps'][:,0], result['steps'][:,1], label=axis_name, where='post')
+
+plot_pos.legend()
+plot_pos.grid(True)
+
+plot_vel.legend()
+plot_vel.grid(True)
+
+plot_acc.legend()
+plot_acc.grid(True)
+
+plot_steps.legend()
+plot_steps.grid(True)
 
 plt.subplots_adjust(hspace=0.38, wspace=0.15, left=0.05, top=0.95, bottom=0.05, right=0.98)
+
+multi = MultiCursor(figure.canvas, (plot_pos, plot_vel, plot_acc, plot_steps), useblit=True, color='r', lw=1)
+
 plt.show()
