@@ -13,19 +13,19 @@ filename = 'analysis.csv'
 axes = {
   'X' : { 
     'index': 0,
-    'mm_per_step': 1/160.0,
+    'mm_per_step': 1/100.0,    
     'visible': True,
     'result': dict()
     },
   'Y' : { 
     'index': 1,
-    'mm_per_step': 1/160.0,
+    'mm_per_step': 1/100.0,
     'visible': True,
     'result': dict()
     },
   'Z' : { 
     'index': 2,
-    'mm_per_step': 1/2133.33,
+    'mm_per_step': 1/400,
     'visible': True,
     'result': dict()
     }
@@ -35,14 +35,14 @@ visible_axes = {k:v for k,v in axes.iteritems() if v['visible']}
 
 show_motion = True
 
-fs = 5000.0  # (Re-)sampling frequency
-fc = 10.0 # Cut-off frequency of the filter
+fs = 2000.0  # (Re-)sampling frequency
+fc = 40.0 # Cut-off frequency of the filter
 
 w = fc / (fs / 2) # Normalize the frequency
 b, a = signal.butter(1, w, 'low')
 
 def interpolate(x, y, t):
-  return interp1d(x, y, kind='zero', bounds_error=False, fill_value='extrapolate')(t)
+  return interp1d(x, y, kind='previous', bounds_error=False, fill_value='extrapolate')(t)
 
 def filter(i):
   return signal.filtfilt(b, a, i)
@@ -64,8 +64,9 @@ def calc_axis(axis_data, time, axis_name):
   pos = interpolate(t, p, time)
 
   pos_filtered = filter(pos)
-  vel = velocity(t, pos_filtered)
-  acc = acceleration(t, pos_filtered)
+
+  vel = filter(velocity(t, pos))
+  acc = filter(velocity(t, vel))
 
   vel_max = maxabs(vel)
   acc_max = maxabs(acc)
