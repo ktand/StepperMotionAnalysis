@@ -1,5 +1,7 @@
-import matplotlib.pyplot as plt
+#!/usr/bin/env python
+
 import pandas as pd
+import matplotlib.pyplot as plt
 import math
 import sys
 import numpy as np
@@ -31,21 +33,19 @@ axes = {
     }
 }
 
-visible_axes = {k:v for k,v in axes.iteritems() if v['visible']}
+visible_axes = {k:v for k,v in axes.items() if v['visible']}
 
 show_motion = True
 
-fs = 2000.0  # (Re-)sampling frequency
-fc = 40.0 # Cut-off frequency of the filter
+fs = 5000.0  # (Re-)sampling frequency
 
-w = fc / (fs / 2) # Normalize the frequency
-b, a = signal.butter(1, w, 'low')
-
-def interpolate(x, y, t):
-  return interp1d(x, y, kind='previous', bounds_error=False, fill_value='extrapolate')(t)
-
-def filter(i):
+def filter(i, fs, fc):
+  w = fc / (fs / 2) # Normalize the frequency
+  b, a = signal.butter(3, w, 'low')
   return signal.filtfilt(b, a, i)
+
+def savgol_filter(i):
+  return signal.savgol_filter(i, 3, 1)
 
 def velocity(x, y):
   return np.append([0], np.diff(y)*fs) 
@@ -58,32 +58,33 @@ def acceleration(x, y):
 def maxabs(a):
   return max(np.max(a), abs(np.min(a)))
 
-def calc_axis(axis_data, time, axis_name):
+def calc_axis(axis_data, time, axis_name, time_start, time_end, fs):
   t,p,s,n = zip(*axis_data)
   
-  pos = interpolate(t, p, time)
+  pos = interp1d(t, p, kind='nearest', bounds_error=False, fill_value='extrapolate')(time)  # OK
 
-  pos_filtered = filter(pos)
+  vel = velocity(t, pos)
+  acc = acceleration(t, pos)
 
-  vel = filter(velocity(t, pos))
-  acc = filter(velocity(t, vel))
+  vel_filtered = filter(vel, fs, 200)
+  acc_filtered = filter(acc, fs, 50)
 
-  vel_max = maxabs(vel)
-  acc_max = maxabs(acc)
+  vel_max = maxabs(vel_filtered)
+  acc_max = maxabs(acc_filtered)
 
   pulse_min = np.min(s)*1000*1000
   pulse_avg = np.mean(s)*1000*1000
   pulse_max = np.max(s)*1000*1000
   
   if len(s) > 0:
-    print '[Axis {}]: Pulse width (min, avg, max): {:.3f}us, {:.3f}us, {:.3f}us. Max velocity = {:f}. Max acceleration = {:f}'.format(axis_name, pulse_min, pulse_avg, pulse_max, vel_max, acc_max)
+    print ('[Axis {}]: Pulse width (min, avg, max): {:.3f}us, {:.3f}us, {:.3f}us. Max velocity = {:f}. Max acceleration = {:f}'.format(axis_name, pulse_min, pulse_avg, pulse_max, vel_max, acc_max))
 
   steps = []
   for step_time, step_width, step_dir in zip(t, s, n):
     steps.append([step_time, step_dir])
     steps.append([step_time+step_width, 0])
 
-  return { 'pos': pos, 'pos_filtered': pos_filtered, 'vel': vel, 'acc': acc, 'steps': np.array(steps), 'vel_max': vel_max, 'acc_max': acc_max, 'pulse_min': pulse_min, 'pulse_avg': pulse_avg, 'pulse_max' : pulse_max }
+  return { 'pos': pos, 'vel': vel, 'vel_filtered': vel_filtered, 'acc': acc, 'acc_filtered': acc_filtered, 'steps': np.array(steps), 'vel_max': vel_max, 'acc_max': acc_max, 'pulse_min': pulse_min, 'pulse_avg': pulse_avg, 'pulse_max' : pulse_max }
 
 def extract_data(data, timeIdx, stepIdx, dirIdx, mm_per_step):
     position = 0
@@ -100,18 +101,23 @@ def extract_data(data, timeIdx, stepIdx, dirIdx, mm_per_step):
           yield (pulseStart, position, t-pulseStart, step)
           pulseStart = None
 
-print 'Loading dataset...'
-data = pd.read_csv(filename, delimiter = ',', header=0).get_values()
-print 'Sample count =', len(data)
+print ('Loading dataset...')
+dtype_dict = {'Time[s]':'float64','X STEP':'bool', 'X DIR':'bool','Y STEP':'bool','Y DIR':'bool','Z STEP':'bool','Z DIR':'bool'}
+
+dataFrame = pd.read_csv(filename, delimiter = ',', skipinitialspace=True, header=0)
+
+data = dataFrame.get_values()
+
+print ('Sample count =', len(data))
 
 time_start = data[0][0]
 time_end = data[-1][0]
 
-reg_t = np.linspace(time_start, time_end, round((time_end - time_start) / (1/fs) + 1))
-print 'Interpolated steps =', len(reg_t)
+reg_t = np.linspace(time_start, time_end, int((time_end - time_start) // (1/fs) + 1))
+print ('Interpolated steps =', len(reg_t))
 
-for axis_name, axis in visible_axes.iteritems():
-  axis['result'] = calc_axis(extract_data(data, 0, axis['index']*2+1, axis['index']*2+2, axis['mm_per_step']), reg_t, axis_name)
+for axis_name, axis in visible_axes.items():
+  axis['result'] = calc_axis(extract_data(data, 0, axis['index']*2+1, axis['index']*2+2, axis['mm_per_step']), reg_t, axis_name, time_start, time_end, fs)
 
 can_show_motion = show_motion and axes['X']['result'] and axes['Y']['result']
 
@@ -155,11 +161,13 @@ if can_show_motion:
 props = dict(boxstyle='round', facecolor='wheat', alpha=0.25)
 
 # Plot visible axes
-for axis_name, axis in visible_axes.iteritems():
+for axis_name, axis in visible_axes.items():
     result = axis['result']
     plot_pos.step(reg_t, result['pos'], label=axis_name)  
-    plot_vel.plot(reg_t, result['vel'], label=axis_name)
-    plot_acc.plot(reg_t, result['acc'], label=axis_name)
+    # plot_vel.plot(reg_t, result['vel'], label=axis_name)
+    plot_vel.plot(reg_t, result['vel_filtered'], label=axis_name)
+    # plot_acc.plot(reg_t, result['acc'], label=axis_name)
+    plot_acc.plot(reg_t, result['acc_filtered'], label=axis_name)
     plot_steps.step(result['steps'][:,0], result['steps'][:,1], label=axis_name, where='post')
 
 plot_pos.legend()
